@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>HALCON HDevelop Web Editor</title>
+
+  <!-- CodeMirror core -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/mode/simple.min.js"></script>
+
+  <!-- Search / Replace addons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/dialog/dialog.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/search/searchcursor.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/search/search.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/dialog/dialog.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/search/jump-to-line.min.js"></script>
+
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    #toolbar {
+      background: #eee;
+      padding: 6px;
+      flex: 0 0 auto;
+    }
+    #editor-container {
+      flex: 1 1 auto;
+      display: flex;
+      overflow: hidden;
+    }
+    .CodeMirror {
+      height: 100% !important;
+      width: 100% !important;
+      font-family: Consolas, monospace;
+      font-size: 14px;
+    }
+    .cm-keyword { color: blue; font-weight: bold; }
+    .cm-comment { color: darkgreen; font-style: italic; }
+    .cm-string  { color: darkred; }
+    .cm-error   { color: red; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <button onclick="openFile()">Open</button>
+    <button onclick="saveFile()">Save</button>
+    <button onclick="saveAs()">Save As</button>
+    <button onclick="editor.execCommand('find')">Find</button>
+    <button onclick="editor.execCommand('replace')">Replace</button>
+    <input type="file" id="fileInput" style="display:none" accept=".hdev"/>
+  </div>
+  <div id="editor-container">
+    <textarea id="editor"></textarea>
+  </div>
+
+<script>
+  // ---- HALCON operators ----
+  const HALCON_OPS = new Set([
+    "read_image","write_image","dev_open_window","dev_close_window",
+    "dev_display","disp_image","clear_window","gen_image_const",
+    "threshold","connection","select_shape","union1","difference",
+    "intersection","fill_up","dilation1","erosion1",
+    "gen_circle","gen_rectangle1","gen_region_points",
+    "area_center","orientation_region","count_obj",
+    "if","endif","for","endfor","while","endwhile","stop","return"
+  ]);
+
+  // ---- Custom mode for HALCON ----
+  CodeMirror.defineSimpleMode("halcon", {
+    start: [
+      {regex: /\*.*$/, token: "comment"},             // comments
+      {regex: /"([^"]|\\")*"/, token: "string"},     // strings
+      {regex: /\b(?:[A-Za-z_][A-Za-z0-9_]*)\b/, token: function (word) {
+        if (HALCON_OPS.has(word)) return "keyword";
+        return "error";
+      }}
+    ]
+  });
+
+  // ---- Editor ----
+  const editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
+    lineNumbers: true,
+    mode: "halcon"
+  });
+
+  // ---- File Handling ----
+  let currentName = null;
+
+  function openFile() {
+    document.getElementById("fileInput").click();
+  }
+
+  document.getElementById("fileInput").addEventListener("change", async evt => {
+    let file = evt.target.files[0];
+    if (!file) return;
+    currentName = file.name;
+    let text = await file.text();
+    let parser = new DOMParser();
+    let xml = parser.parseFromString(text, "application/xml");
+    let lines = [];
+    xml.querySelectorAll("c").forEach(c => lines.push("* " + (c.textContent || "")));
+    xml.querySelectorAll("l").forEach(l => lines.push(l.textContent || ""));
+    editor.setValue(lines.join("\n"));
+  });
+
+  function saveFile() {
+    if (!currentName) return saveAs();
+    downloadHdev(currentName);
+  }
+
+  function saveAs() {
+    let name = prompt("Save as filename:", currentName || "program.hdev");
+    if (name) {
+      currentName = name;
+      downloadHdev(name);
+    }
+  }
+
+  function downloadHdev(name) {
+    let code = editor.getValue().split("\n");
+    let xml = document.implementation.createDocument("", "", null);
+    let root = xml.createElement("hdevelop");
+    let body = xml.createElement("body");
+    root.appendChild(body);
+    xml.appendChild(root);
+
+    code.forEach(line => {
+      if (line.trim().startsWith("*")) {
+        let c = xml.createElement("c");
+        c.textContent = line.replace(/^\*\s?/, "");
+        body.appendChild(c);
+      } else {
+        let l = xml.createElement("l");
+        l.textContent = line;
+        body.appendChild(l);
+      }
+    });
+
+    let serializer = new XMLSerializer();
+    let xmlStr = serializer.serializeToString(xml);
+    let blob = new Blob([xmlStr], {type:"application/xml"});
+    let a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+  }
+
+  // ---- Hotkeys ----
+  window.addEventListener("keydown", function(e) {
+    if (e.ctrlKey && e.key === "o") { e.preventDefault(); openFile(); }
+    if (e.ctrlKey && e.key === "s") { e.preventDefault(); saveFile(); }
+    if (e.ctrlKey && e.key === "f") { e.preventDefault(); editor.execCommand("find"); }
+    if (e.ctrlKey && e.key === "h") { e.preventDefault(); editor.execCommand("replace"); }
+  });
+</script>
+</body>
+</html>
