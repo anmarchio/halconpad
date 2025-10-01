@@ -102,9 +102,17 @@
     let text = await file.text();
     let parser = new DOMParser();
     let xml = parser.parseFromString(text, "application/xml");
+    let body = xml.querySelector("body");
     let lines = [];
-    xml.querySelectorAll("c").forEach(c => lines.push("* " + (c.textContent || "")));
-    xml.querySelectorAll("l").forEach(l => lines.push(l.textContent || ""));
+    body.childNodes.forEach(node => {
+      if (node.nodeType === 1) {
+        if (node.tagName === "c") {
+          lines.push((node.textContent || ""));
+        } else if (node.tagName === "l") {
+          lines.push(node.textContent || "");
+        }
+      }
+    });
     editor.setValue(lines.join("\n"));
   });
 
